@@ -12,9 +12,9 @@ export function createAuthenticator(
   const issuer =
     environment.KEYCLOAK_ISSUER ?? "http://keycloak:8080/realms/algaguard";
   const audience = environment.KEYCLOAK_AUDIENCE ?? "algaguard-api";
-  const jwks = createRemoteJWKSet(
-    new URL(`${issuer}/protocol/openid-connect/certs`),
-  );
+  const jwksUrl =
+    environment.KEYCLOAK_JWKS_URL ?? `${issuer}/protocol/openid-connect/certs`;
+  const jwks = createRemoteJWKSet(new URL(jwksUrl));
   return async (authorization) => {
     const token = /^Bearer ([^ ]+)$/.exec(authorization ?? "")?.[1];
     if (!token) throw new AuthenticationError("Bearer token required");
@@ -51,22 +51,22 @@ export class OidcAccessAuthorizer implements AccessAuthorizer {
     const issuer =
       this.environment.KEYCLOAK_ISSUER ??
       "http://keycloak:8080/realms/algaguard";
+    const tokenUrl =
+      this.environment.KEYCLOAK_TOKEN_URL ??
+      `${issuer}/protocol/openid-connect/token`;
     const secret = this.environment.SERVICE_CLIENT_SECRET;
     if (!secret)
       throw new AuthenticationError("SERVICE_CLIENT_SECRET is required");
-    const response = await this.fetcher(
-      `${issuer}/protocol/openid-connect/token`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "client_credentials",
-          client_id:
-            this.environment.SERVICE_CLIENT_ID ?? "algaguard-profile-service",
-          client_secret: secret,
-        }),
-      },
-    );
+    const response = await this.fetcher(tokenUrl, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id:
+          this.environment.SERVICE_CLIENT_ID ?? "algaguard-profile-service",
+        client_secret: secret,
+      }),
+    });
     if (!response.ok)
       throw new AuthenticationError("Service authentication failed");
     const body = (await response.json()) as {
