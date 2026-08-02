@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 export interface Principal {
   subjectId: string;
+  clientId?: string;
 }
 export type Authenticator = (
   authorization: string | undefined,
@@ -21,7 +22,12 @@ export function createAuthenticator(
     const result = await jwtVerify(token, jwks, { issuer, audience });
     if (!result.payload.sub)
       throw new AuthenticationError("Token subject is required");
-    return { subjectId: result.payload.sub };
+    return {
+      subjectId: result.payload.sub,
+      ...(typeof result.payload.azp === "string"
+        ? { clientId: result.payload.azp }
+        : {}),
+    };
   };
 }
 export interface AccessAuthorizer {

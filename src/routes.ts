@@ -18,11 +18,76 @@ const configuration = z
     (value) => Object.keys(value).length > 0,
     "configuration must not be empty",
   );
+const alertThresholds = z
+  .object({
+    schema: z.literal("urn:algaguard:schema:profile:algae-thresholds:v1"),
+    parameters: z
+      .object({
+        temperatureC: z.object({ minimum: z.number(), maximum: z.number() }),
+        ph: z.object({ minimum: z.number(), maximum: z.number() }),
+        lightLux: z.object({ minimum: z.number(), maximum: z.number() }),
+        nitrateMgL: z.object({ minimum: z.number(), maximum: z.number() }),
+        phosphateMgL: z.object({ minimum: z.number(), maximum: z.number() }),
+        potassiumMgL: z.object({ minimum: z.number(), maximum: z.number() }),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    for (const [parameter, bounds] of Object.entries(value.parameters)) {
+      if (bounds.minimum >= bounds.maximum) {
+        context.addIssue({
+          code: "custom",
+          path: ["parameters", parameter],
+          message: "minimum must be less than maximum",
+        });
+      }
+    }
+  });
 export function createRouter(dependencies: RouteDependencies) {
   const router = Router();
   const auth = dependencies.authenticate ?? createAuthenticator();
   const access = dependencies.authorize ?? new OidcAccessAuthorizer();
   const { repository } = dependencies;
+  router.get(
+    "/internal/devices/:deviceId/alert-profile",
+    async (request, response) => {
+      const actor = await auth(request.header("authorization"));
+      if (
+        actor.clientId !==
+        (process.env.ALERT_PROCESSOR_CLIENT_ID ?? "algaguard-realtime-service")
+      ) {
+        throw new DomainError("FORBIDDEN", 403, "Operation is not authorized");
+      }
+      const organizationId = z
+        .string()
+        .uuid()
+        .parse(request.query.organizationId);
+      const assignment = await repository.activeAssignment(
+        z
+          .string()
+          .regex(/^AG-[0-9]{6}$/)
+          .parse(request.params.deviceId),
+      );
+      if (!assignment || assignment.organizationId !== organizationId) {
+        response.status(404).json({ code: "ASSIGNMENT_NOT_FOUND" });
+        return;
+      }
+      const profile = await repository.getProfile(assignment.profileId);
+      const version = (await repository.versions(assignment.profileId)).find(
+        (candidate) => candidate.version === assignment.profileVersion,
+      );
+      if (!profile || !version) {
+        response.status(404).json({ code: "PROFILE_VERSION_NOT_FOUND" });
+        return;
+      }
+      response.json({
+        profileId: assignment.profileId,
+        version: assignment.profileVersion,
+        configuration: alertThresholds.parse(version.configuration),
+      });
+    },
+  );
   async function requireAccess(
     request: Request,
     action: string,

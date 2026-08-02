@@ -63,3 +63,66 @@ test("unknown routes use problem details", async () => {
     /application\/problem\+json/,
   );
 });
+
+test("realtime alert processor receives only the assigned immutable thresholds", async () => {
+  const repository = new MemoryProfileRepository();
+  const organizationId = "10000000-0000-4000-8000-000000000001";
+  const configuration = {
+    schema: "urn:algaguard:schema:profile:algae-thresholds:v1",
+    parameters: {
+      temperatureC: { minimum: 20, maximum: 30 },
+      ph: { minimum: 6, maximum: 8 },
+      lightLux: { minimum: 100, maximum: 1000 },
+      nitrateMgL: { minimum: 1, maximum: 100 },
+      phosphateMgL: { minimum: 1, maximum: 100 },
+      potassiumMgL: { minimum: 1, maximum: 100 },
+    },
+  };
+  const profile = await repository.createProfile({
+    organizationId,
+    name: "Assigned algae",
+    configuration,
+  });
+  await repository.assign({
+    deviceId: "AG-000001",
+    organizationId,
+    profileId: profile.profileId,
+    version: 1,
+    assignedBy: "owner",
+  });
+  const instance = buildApp({
+    repository,
+    authenticate: async () => ({
+      subjectId: "service-account",
+      clientId: "algaguard-realtime-service",
+    }),
+    authorize,
+  });
+  const response = await request(instance)
+    .get(
+      `/v1/internal/devices/AG-000001/alert-profile?organizationId=${organizationId}`,
+    )
+    .set("authorization", "Bearer service");
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.configuration, configuration);
+  assert.equal(JSON.stringify(response.body).includes("assignedBy"), false);
+
+  const denied = buildApp({
+    repository,
+    authenticate: async () => ({
+      subjectId: "mobile-user",
+      clientId: "algaguard-mobile",
+    }),
+    authorize,
+  });
+  assert.equal(
+    (
+      await request(denied)
+        .get(
+          `/v1/internal/devices/AG-000001/alert-profile?organizationId=${organizationId}`,
+        )
+        .set("authorization", "Bearer user")
+    ).status,
+    403,
+  );
+});
