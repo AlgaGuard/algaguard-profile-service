@@ -37,6 +37,7 @@ function profile(row: Record<string, unknown>): Profile {
     createdAt: iso(
       (row.profile_created_at as Date) ?? (row.created_at as Date),
     ),
+    ...(row.deleted_at ? { deletedAt: iso(row.deleted_at as Date) } : {}),
     current: version(row),
   };
 }
@@ -63,7 +64,8 @@ const currentProfileQuery = `
     JOIN LATERAL (
       SELECT * FROM profile_versions pv WHERE pv.profile_id = p.id
       ORDER BY pv.version DESC LIMIT 1
-    ) v ON true`;
+    ) v ON true
+   WHERE p.deleted_at IS NULL`;
 
 export class PostgresProfileRepository implements ProfileRepository {
   constructor(readonly pool: pg.Pool) {}
@@ -97,10 +99,9 @@ export class PostgresProfileRepository implements ProfileRepository {
           configurationHash(input.configuration),
         ],
       );
-      const result = await client.query(
-        `${currentProfileQuery} WHERE p.id=$1`,
-        [profileId],
-      );
+      const result = await client.query(`${currentProfileQuery} AND p.id=$1`, [
+        profileId,
+      ]);
       await client.query("COMMIT");
       return profile(result.rows[0] as Record<string, unknown>);
     } catch (error) {
@@ -157,21 +158,50 @@ export class PostgresProfileRepository implements ProfileRepository {
   async listProfiles(organizationId: string) {
     const result = await this.pool.query(
       `${currentProfileQuery}
-       WHERE p.organization_id=$1 OR EXISTS(
+       AND (p.organization_id=$1 OR EXISTS(
          SELECT 1 FROM profile_shares s WHERE s.profile_id=p.id AND s.organization_id=$1
-       ) ORDER BY p.name,p.id`,
+       )) ORDER BY p.name,p.id`,
       [organizationId],
     );
     return result.rows.map((row) => profile(row as Record<string, unknown>));
   }
   async getProfile(profileId: string) {
-    const result = await this.pool.query(
-      `${currentProfileQuery} WHERE p.id=$1`,
-      [profileId],
-    );
+    const result = await this.pool.query(`${currentProfileQuery} AND p.id=$1`, [
+      profileId,
+    ]);
     return result.rows[0]
       ? profile(result.rows[0] as Record<string, unknown>)
       : undefined;
+  }
+
+  async deleteProfile(profileId: string, deletedBy: string) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const deleted = await client.query(
+        `UPDATE profiles SET deleted_at=now(), updated_at=now()
+          WHERE id=$1 AND deleted_at IS NULL RETURNING id`,
+        [profileId],
+      );
+      if (!deleted.rowCount)
+        throw new DomainError("PROFILE_NOT_FOUND", 404, "Profile not found");
+      await client.query(
+        `UPDATE profile_assignments SET active=false
+          WHERE profile_id=$1 AND active`,
+        [profileId],
+      );
+      await client.query(
+        `INSERT INTO profile_audit_events(profile_id, actor_subject_id, event_type)
+         VALUES($1,$2,'PROFILE_DELETED')`,
+        [profileId, deletedBy],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async versions(profileId: string) {
     const result = await this.pool.query(

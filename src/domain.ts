@@ -18,6 +18,7 @@ export interface Profile {
   sourceProfileId?: string;
   current: ProfileVersion;
   createdAt: string;
+  deletedAt?: string;
 }
 
 export interface Assignment {
@@ -95,6 +96,7 @@ export interface ProfileRepository {
   ): Promise<Profile>;
   listProfiles(organizationId: string): Promise<Profile[]>;
   getProfile(profileId: string): Promise<Profile | undefined>;
+  deleteProfile(profileId: string, deletedBy: string): Promise<void>;
   versions(profileId: string): Promise<ProfileVersion[]>;
   share(
     profileId: string,
@@ -119,6 +121,7 @@ export class MemoryProfileRepository implements ProfileRepository {
   private readonly profileVersions = new Map<string, ProfileVersion[]>();
   private readonly shares = new Map<string, Set<string>>();
   private readonly assignments = new Map<string, Assignment[]>();
+  private readonly inactiveAssignments = new Set<string>();
 
   async createProfile(input: {
     organizationId: string;
@@ -196,6 +199,18 @@ export class MemoryProfileRepository implements ProfileRepository {
       ? { ...structuredClone(profile), current: structuredClone(current) }
       : undefined;
   }
+
+  async deleteProfile(profileId: string, _deletedBy: string) {
+    if (!this.profiles.has(profileId))
+      throw new DomainError("PROFILE_NOT_FOUND", 404, "Profile not found");
+    this.profiles.delete(profileId);
+    this.profileVersions.delete(profileId);
+    this.shares.delete(profileId);
+    for (const assignments of this.assignments.values())
+      for (const assignment of assignments)
+        if (assignment.profileId === profileId)
+          this.inactiveAssignments.add(assignment.id);
+  }
   async versions(profileId: string) {
     return structuredClone(this.profileVersions.get(profileId) ?? []);
   }
@@ -248,7 +263,10 @@ export class MemoryProfileRepository implements ProfileRepository {
     return structuredClone(assignment);
   }
   async activeAssignment(deviceId: string) {
-    return structuredClone(this.assignments.get(deviceId)?.at(-1));
+    const active = [...(this.assignments.get(deviceId) ?? [])]
+      .reverse()
+      .find((assignment) => !this.inactiveAssignments.has(assignment.id));
+    return structuredClone(active);
   }
   async assignmentHistory(deviceId: string) {
     return structuredClone(this.assignments.get(deviceId) ?? []);
