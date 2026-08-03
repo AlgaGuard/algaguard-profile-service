@@ -55,6 +55,36 @@ test("profile create, version, clone, and list flows are functional", async () =
     .set("authorization", "Bearer user");
   assert.equal(listed.body.items.length, 2);
 });
+
+test("profile deletion archives it and deactivates its alert assignment", async () => {
+  const repository = new MemoryProfileRepository();
+  const instance = buildApp({ repository, authenticate, authorize });
+  const organizationId = "10000000-0000-4000-8000-000000000001";
+  const created = await repository.createProfile({
+    organizationId,
+    name: "Disposable",
+    configuration: { demo: true },
+  });
+  await repository.assign({
+    deviceId: "AG-000001",
+    organizationId,
+    profileId: created.profileId,
+    version: 1,
+    assignedBy: "owner",
+  });
+  assert.equal(
+    (
+      await request(instance)
+        .delete(`/v1/profiles/${created.profileId}`)
+        .set("authorization", "Bearer user")
+        .send({ confirmation: "DELETE" })
+    ).status,
+    204,
+  );
+  assert.equal(await repository.getProfile(created.profileId), undefined);
+  assert.equal(await repository.activeAssignment("AG-000001"), undefined);
+  assert.equal((await repository.assignmentHistory("AG-000001")).length, 1);
+});
 test("unknown routes use problem details", async () => {
   const response = await request(app()).get("/missing");
   assert.equal(response.status, 404);
@@ -68,14 +98,10 @@ test("realtime alert processor receives only the assigned immutable thresholds",
   const repository = new MemoryProfileRepository();
   const organizationId = "10000000-0000-4000-8000-000000000001";
   const configuration = {
-    schema: "urn:algaguard:schema:profile:algae-thresholds:v1",
-    parameters: {
-      temperatureC: { minimum: 20, maximum: 30 },
-      ph: { minimum: 6, maximum: 8 },
-      lightLux: { minimum: 100, maximum: 1000 },
-      nitrateMgL: { minimum: 1, maximum: 100 },
-      phosphateMgL: { minimum: 1, maximum: 100 },
-      potassiumMgL: { minimum: 1, maximum: 100 },
+    status: "DRAFT",
+    thresholds: {
+      temperatureC: { min: 20, max: 30 },
+      ph: { min: 6, max: 8 },
     },
   };
   const profile = await repository.createProfile({

@@ -18,28 +18,36 @@ const configuration = z
     (value) => Object.keys(value).length > 0,
     "configuration must not be empty",
   );
+const alertThresholdBounds = z
+  .object({ min: z.number().optional(), max: z.number().optional() })
+  .strict();
 const alertThresholds = z
   .object({
-    schema: z.literal("urn:algaguard:schema:profile:algae-thresholds:v1"),
-    parameters: z
+    status: z.string().optional(),
+    thresholds: z
       .object({
-        temperatureC: z.object({ minimum: z.number(), maximum: z.number() }),
-        ph: z.object({ minimum: z.number(), maximum: z.number() }),
-        lightLux: z.object({ minimum: z.number(), maximum: z.number() }),
-        nitrateMgL: z.object({ minimum: z.number(), maximum: z.number() }),
-        phosphateMgL: z.object({ minimum: z.number(), maximum: z.number() }),
-        potassiumMgL: z.object({ minimum: z.number(), maximum: z.number() }),
+        temperatureC: alertThresholdBounds.optional(),
+        ph: alertThresholdBounds.optional(),
+        lightLux: alertThresholdBounds.optional(),
+        nitrateMgL: alertThresholdBounds.optional(),
+        phosphateMgL: alertThresholdBounds.optional(),
+        potassiumMgL: alertThresholdBounds.optional(),
       })
-      .strict(),
+      .strict()
+      .default({}),
   })
   .strict()
   .superRefine((value, context) => {
-    for (const [parameter, bounds] of Object.entries(value.parameters)) {
-      if (bounds.minimum >= bounds.maximum) {
+    for (const [parameter, bounds] of Object.entries(value.thresholds)) {
+      if (
+        bounds?.min !== undefined &&
+        bounds.max !== undefined &&
+        bounds.min >= bounds.max
+      ) {
         context.addIssue({
           code: "custom",
-          path: ["parameters", parameter],
-          message: "minimum must be less than maximum",
+          path: ["thresholds", parameter],
+          message: "min must be less than max",
         });
       }
     }
@@ -151,6 +159,19 @@ export function createRouter(dependencies: RouteDependencies) {
     response
       .status(value ? 200 : 404)
       .json(value ?? { code: "PROFILE_NOT_FOUND" });
+  });
+  router.delete("/profiles/:id", async (request, response) => {
+    const actor = await requireAccess(
+      request,
+      "profile.manage",
+      "profile",
+      request.params.id,
+    );
+    z.object({ confirmation: z.literal("DELETE") })
+      .strict()
+      .parse(request.body);
+    await repository.deleteProfile(request.params.id, actor.subjectId);
+    response.status(204).end();
   });
   router.post("/profiles/:id/versions", async (request, response) => {
     await requireAccess(
