@@ -29,9 +29,7 @@ const alertThresholds = z
         temperatureC: alertThresholdBounds.optional(),
         ph: alertThresholdBounds.optional(),
         lightLux: alertThresholdBounds.optional(),
-        nitrateMgL: alertThresholdBounds.optional(),
-        phosphateMgL: alertThresholdBounds.optional(),
-        potassiumMgL: alertThresholdBounds.optional(),
+        nutrientPercent: alertThresholdBounds.optional(),
       })
       .strict()
       .default({}),
