@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package algaguard.profile.v1;
+
+// Hosted by profile-service. Replaces the one internal-only lookup used
+// by realtime-service's threshold-alert push path -- see
+// algaguard-profile-service/src/routes.ts:59-90.
+
+service ProfileLookupService {
+  // Replaces GET /v1/internal/devices/:deviceId/alert-profile
+  // (routes.ts:59-90). Caller: realtime-service's ThresholdPushProcessor,
+  // invoked off the algaguard:telemetry:committed consumer loop, not a
+  // user-facing request.
+  rpc GetAlertProfile(GetAlertProfileRequest) returns (AlertProfile);
+}
+
+message GetAlertProfileRequest {
+  string device_id = 1; // AG-XXXXXX form, matches the HTTP path param
+  string organization_id = 2; // must match the assignment's own org
+}
+
+message AlertProfile {
+  string profile_id = 1;
+  int32 version = 2;
+  // JSON-encoded threshold configuration (temperatureC/ph/lightLux/
+  // nutrientPercent min/max) -- kept as an opaque string rather than a
+  // typed message so this proto doesn't have to track the profile
+  // configuration schema's own shape separately; ThresholdPushProcessor
+  // already parses this exact JSON today.
+  string configuration_json = 3;
+}

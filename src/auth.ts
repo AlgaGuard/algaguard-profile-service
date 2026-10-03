@@ -1,4 +1,28 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import * as grpc from "@grpc/grpc-js";
+import * as protoLoader from "@grpc/proto-loader";
+import {
+  createServiceTokenProvider,
+  metadataWithServiceToken,
+} from "./grpc-client.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const ACCESS_PROTO_PATH = path.resolve(
+  here,
+  "..",
+  "proto",
+  "access_service.proto",
+);
+const RESOURCE_TYPE_NUMBER: Record<
+  "organization" | "profile" | "device",
+  number
+> = {
+  organization: 1,
+  device: 2,
+  profile: 3,
+};
 export interface Principal {
   subjectId: string;
   clientId?: string;
@@ -143,5 +167,88 @@ export class OidcAccessAuthorizer implements AccessAuthorizer {
       throw new Error(
         `Access resource registration failed with ${response.status}`,
       );
+  }
+}
+
+export class GrpcAccessAuthorizer implements AccessAuthorizer {
+  private readonly authorizationClient: any;
+  private readonly registryClient: any;
+  private readonly serviceToken: () => Promise<string>;
+
+  constructor(
+    address: string,
+    environment: NodeJS.ProcessEnv = process.env,
+    serviceToken = createServiceTokenProvider(environment),
+  ) {
+    const packageDefinition = protoLoader.loadSync(ACCESS_PROTO_PATH, {
+      keepCase: false,
+      longs: String,
+      enums: Number,
+      defaults: true,
+      oneofs: true,
+      includeDirs: [path.dirname(ACCESS_PROTO_PATH)],
+    });
+    const proto = grpc.loadPackageDefinition(packageDefinition) as any;
+    this.serviceToken = serviceToken;
+    const credentials = grpc.credentials.createInsecure();
+    this.authorizationClient =
+      new proto.algaguard.access.v1.AuthorizationService(address, credentials);
+    this.registryClient = new proto.algaguard.access.v1.ResourceRegistryService(
+      address,
+      credentials,
+    );
+  }
+
+  async authorize(input: {
+    subjectId: string;
+    action: string;
+    resourceType: "organization" | "profile" | "device";
+    resourceId: string;
+    organizationId?: string;
+    correlationId?: string;
+  }) {
+    const metadata = await metadataWithServiceToken(
+      this.serviceToken,
+      input.correlationId ? { "x-correlation-id": input.correlationId } : {},
+    );
+    const response = await new Promise<any>((resolve, reject) => {
+      this.authorizationClient.decide(
+        {
+          subjectId: input.subjectId,
+          action: input.action,
+          resourceType: RESOURCE_TYPE_NUMBER[input.resourceType],
+          resourceId: input.resourceId,
+          ...(input.organizationId
+            ? { organizationId: input.organizationId }
+            : {}),
+        },
+        metadata,
+        (error: grpc.ServiceError, value: unknown) =>
+          error ? reject(error) : resolve(value),
+      );
+    }).catch(() => undefined);
+    return Boolean(response?.allowed);
+  }
+
+  async registerProfile(
+    profileId: string,
+    organizationId: string,
+    correlationId?: string,
+  ) {
+    const metadata = await metadataWithServiceToken(
+      this.serviceToken,
+      correlationId ? { "x-correlation-id": correlationId } : {},
+    );
+    await new Promise<void>((resolve, reject) => {
+      this.registryClient.registerResource(
+        {
+          resourceType: RESOURCE_TYPE_NUMBER.profile,
+          resourceId: profileId,
+          organizationId,
+        },
+        metadata,
+        (error: grpc.ServiceError) => (error ? reject(error) : resolve()),
+      );
+    });
   }
 }
