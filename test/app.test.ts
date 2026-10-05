@@ -152,3 +152,50 @@ test("realtime alert processor receives only the assigned immutable thresholds",
     403,
   );
 });
+
+test("alert processor receives NPK estimate thresholds from a mobile-app profile", async () => {
+  const repository = new MemoryProfileRepository();
+  const organizationId = "10000000-0000-4000-8000-000000000001";
+  // The shape the mobile app saves (minimum/maximum under "parameters").
+  const profile = await repository.createProfile({
+    organizationId,
+    name: "App profile",
+    configuration: {
+      schema: "urn:algaguard:schema:profile:algae-thresholds:v1",
+      schemaVersion: "1.0.0",
+      parameters: {
+        ph: { minimum: 6.5, maximum: 8.5 },
+        nitrateMgL: { minimum: 5, maximum: 60 },
+        potassiumMgL: { minimum: 20, maximum: 35 },
+      },
+    },
+  });
+  await repository.assign({
+    deviceId: "AG-000001",
+    organizationId,
+    profileId: profile.profileId,
+    version: 1,
+    assignedBy: "owner",
+  });
+  const instance = buildApp({
+    repository,
+    authenticate: async () => ({
+      subjectId: "service-account",
+      clientId: "algaguard-realtime-service",
+    }),
+    authorize,
+  });
+  const response = await request(instance)
+    .get(
+      `/v1/internal/devices/AG-000001/alert-profile?organizationId=${organizationId}`,
+    )
+    .set("authorization", "Bearer service");
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.configuration, {
+    thresholds: {
+      ph: { min: 6.5, max: 8.5 },
+      nitrateMgL: { min: 5, max: 60 },
+      potassiumMgL: { min: 20, max: 35 },
+    },
+  });
+});
