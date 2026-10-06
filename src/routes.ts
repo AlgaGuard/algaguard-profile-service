@@ -30,6 +30,9 @@ const alertThresholds = z
         ph: alertThresholdBounds.optional(),
         lightLux: alertThresholdBounds.optional(),
         nutrientPercent: alertThresholdBounds.optional(),
+        nitrateMgL: alertThresholdBounds.optional(),
+        phosphateMgL: alertThresholdBounds.optional(),
+        potassiumMgL: alertThresholdBounds.optional(),
       })
       .strict()
       .default({}),
@@ -50,6 +53,32 @@ const alertThresholds = z
       }
     }
   });
+// The mobile app saves profiles as {schema, parameters: {key: {minimum,
+// maximum}}}, while the web dashboard saves {status, thresholds: {key: {min,
+// max}}}. The alert processor reads the dashboard's shape, so translate the
+// app's shape here -- otherwise an app-created profile fails to parse and its
+// device never raises a threshold alert.
+function alertThresholdsFrom(configuration: Record<string, unknown>) {
+  const parameters = configuration.parameters;
+  if (
+    configuration.schema !==
+      "urn:algaguard:schema:profile:algae-thresholds:v1" ||
+    typeof parameters !== "object" ||
+    parameters === null
+  )
+    return alertThresholds.parse(configuration);
+  const thresholds: Record<string, { min?: unknown; max?: unknown }> = {};
+  for (const [key, bounds] of Object.entries(parameters)) {
+    if (typeof bounds !== "object" || bounds === null) continue;
+    const { minimum, maximum } = bounds as Record<string, unknown>;
+    thresholds[key] = {
+      ...(minimum === undefined ? {} : { min: minimum }),
+      ...(maximum === undefined ? {} : { max: maximum }),
+    };
+  }
+  return alertThresholds.parse({ thresholds });
+}
+
 export function createRouter(dependencies: RouteDependencies) {
   const router = Router();
   const auth = dependencies.authenticate ?? createAuthenticator();
@@ -90,7 +119,7 @@ export function createRouter(dependencies: RouteDependencies) {
       response.json({
         profileId: assignment.profileId,
         version: assignment.profileVersion,
-        configuration: alertThresholds.parse(version.configuration),
+        configuration: alertThresholdsFrom(version.configuration),
       });
     },
   );
