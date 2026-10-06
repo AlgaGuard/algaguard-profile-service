@@ -114,6 +114,48 @@ test("GetAlertProfile returns the active assignment's configuration", async () =
   }
 });
 
+test("GetAlertProfile translates a mobile-app profile, including NPK estimate thresholds", async () => {
+  const { repository, client, stop } = await startServer();
+  try {
+    const organizationId = randomUUID();
+    const profile = await repository.createProfile({
+      organizationId,
+      name: "From the app",
+      configuration: {
+        schema: "urn:algaguard:schema:profile:algae-thresholds:v1",
+        schemaVersion: "1.0.0",
+        parameters: {
+          temperatureC: { minimum: 20, maximum: 30 },
+          potassiumMgL: { minimum: 20, maximum: 35 },
+        },
+      },
+    });
+    await repository.assign({
+      deviceId: "AG-000002",
+      organizationId,
+      profileId: profile.profileId,
+      version: profile.current.version,
+      assignedBy: "owner",
+    });
+    const response = await new Promise<any>((resolve, reject) => {
+      client.getAlertProfile(
+        { deviceId: "AG-000002", organizationId },
+        metadataFor("algaguard-realtime-service"),
+        (error: grpc.ServiceError, value: unknown) =>
+          error ? reject(error) : resolve(value),
+      );
+    });
+    assert.deepEqual(JSON.parse(response.configurationJson), {
+      thresholds: {
+        temperatureC: { min: 20, max: 30 },
+        potassiumMgL: { min: 20, max: 35 },
+      },
+    });
+  } finally {
+    await stop();
+  }
+});
+
 test("GetAlertProfile reports NOT_FOUND when no assignment exists", async () => {
   const { client, stop } = await startServer();
   try {

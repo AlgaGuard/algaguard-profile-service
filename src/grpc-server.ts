@@ -5,6 +5,7 @@ import * as protoLoader from "@grpc/proto-loader";
 import { z } from "zod";
 import { createAuthenticator, type Authenticator } from "./auth.js";
 import type { ProfileRepository } from "./domain.js";
+import { alertThresholdsFrom } from "./routes.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PROTO_PATH = path.resolve(here, "..", "proto", "profile_service.proto");
@@ -85,7 +86,9 @@ export function buildGrpcServer(dependencies: GrpcServerDependencies) {
         callback(null, {
           profileId: assignment.profileId,
           version: assignment.profileVersion,
-          configurationJson: JSON.stringify(version.configuration),
+          configurationJson: JSON.stringify(
+            alertThresholdsFrom(version.configuration),
+          ),
         });
       } catch (error) {
         callback(

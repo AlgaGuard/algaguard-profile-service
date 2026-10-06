@@ -58,7 +58,7 @@ const alertThresholds = z
 // max}}}. The alert processor reads the dashboard's shape, so translate the
 // app's shape here -- otherwise an app-created profile fails to parse and its
 // device never raises a threshold alert.
-function alertThresholdsFrom(configuration: Record<string, unknown>) {
+export function alertThresholdsFrom(configuration: Record<string, unknown>) {
   const parameters = configuration.parameters;
   if (
     configuration.schema !==
